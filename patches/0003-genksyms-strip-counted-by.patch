@@ -1,0 +1,26 @@
+diff --git a/scripts/Makefile.build b/scripts/Makefile.build
+index cee81886e..204421a18 100644
+--- a/scripts/Makefile.build
++++ b/scripts/Makefile.build
+@@ -127,7 +127,11 @@ genksyms = scripts/genksyms/genksyms		\
+ 	-r $(or $(wildcard $(2:.symtypes=.symref)), /dev/null)
+ 
+ # These mirror gensymtypes_S and co below, keep them in synch.
+-cmd_gensymtypes_c = $(CPP) -D__GENKSYMS__ $(c_flags) $< | $(genksyms)
++# genksyms 1.30 (Debian) folds the __counted_by flexible-array annotation
++# into the CRC; the vendor tree was built by a toolchain that lacks the
++# attribute, so stock CRCs correspond to a counted_by-free expansion.
++# Strip it for the genksyms pass only; compiled objects keep it.
++cmd_gensymtypes_c = $(CPP) -D__GENKSYMS__ -DKBUILD_DISABLE_COUNTED_BY $(c_flags) $< | $(genksyms)
+ 
+ quiet_cmd_cc_symtypes_c = SYM $(quiet_modtag) $@
+       cmd_cc_symtypes_c = $(call cmd_gensymtypes_c,true,$@) >/dev/null
+@@ -330,7 +334,7 @@ cmd_gensymtypes_S =                                                         \
+    { echo "\#include <linux/kernel.h>" ;                                    \
+      echo "\#include <asm/asm-prototypes.h>" ;                              \
+      $(NM) $@ | sed -n 's/.* __export_symbol_\(.*\)/EXPORT_SYMBOL(\1);/p' ; } | \
+-    $(CPP) -D__GENKSYMS__ $(c_flags) -xc - | $(genksyms)
++    $(CPP) -D__GENKSYMS__ -DKBUILD_DISABLE_COUNTED_BY $(c_flags) -xc - | $(genksyms)
+ 
+ quiet_cmd_cc_symtypes_S = SYM $(quiet_modtag) $@
+       cmd_cc_symtypes_S = $(call cmd_gensymtypes_S,true,$@) >/dev/null

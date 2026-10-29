@@ -1,0 +1,88 @@
+name: Build Tier A kernel
+
+# Manual trigger only — nothing runs on push, pull_request, schedule or tag.
+on:
+  workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'Parallel compile jobs (empty = runner core count)'
+        required: false
+        default: ''
+      skip_ak3:
+        description: 'Skip the AnyKernel3 zip (build + verify only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  SRC_REPO: OnePlusOSS/android_kernel_common_oneplus_sm8750
+  SRC_COMMIT: 03734e3049cb742786c513ab957f180cde305c9e
+
+jobs:
+  build:
+    # 24.04 ships clang/lld 18, the version this kernel was validated against.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out this repo
+        uses: actions/checkout@v4
+
+      - name: Install cross-compilation toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-18 lld-18 llvm-18 \
+            bc bison flex libelf-dev libssl-dev \
+            dwarves zstd lz4 xz-utils cpio openssl \
+            python3 zip patch curl ca-certificates git
+          # Make clang/lld 18 the default and expose every llvm-* helper.
+          sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-18 100
+          sudo update-alternatives --install /usr/bin/ld.lld ld.lld /usr/bin/ld.lld-18 100
+          # LLVM=/usr/lib/llvm-18/bin/ already resolves every llvm-* tool,
+          # so these links are only a convenience for debugging.
+          for tool in ar nm objcopy objdump readelf strip; do
+            sudo ln -sf "/usr/lib/llvm-18/bin/llvm-$tool" "/usr/local/bin/llvm-$tool" || true
+          done
+
+      - name: Show toolchain versions
+        run: |
+          clang-18 --version
+          ld.lld-18 --version
+          pahole --version
+          python3 --version
+          nproc
+
+      - name: Build and verify
+        env:
+          JOBS: ${{ inputs.jobs }}
+          SKIP_AK3: ${{ inputs.skip_ak3 && '1' || '0' }}
+          KBUILD_BUILD_USER: github
+          KBUILD_BUILD_HOST: actions
+        run: bash build.sh
+
+      - name: Show build report
+        if: always()
+        run: |
+          echo '--- kernel release ---'
+          cat out/include/config/kernel.release 2>/dev/null || echo '(missing)'
+          echo '--- Image ---'
+          ls -l out/arch/arm64/boot/Image 2>/dev/null || echo '(missing)'
+          echo '--- config diff vs stock ---'
+          { diff -u configs/vendor-exported.config out/.config || true; } | grep -E '^[+-]CONFIG_' | head -40
+
+      - name: Upload kernel and AnyKernel3 zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: oneplus13-pjz110-tiera-${{ github.run_number }}
+          if-no-files-found: warn
+          retention-days: 30
+          path: |
+            out/arch/arm64/boot/Image
+            out/.config
+            out/include/config/kernel.release
+            out/Module.symvers
+            dist/*.zip
+            dist/*.sha256

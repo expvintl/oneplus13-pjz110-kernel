@@ -1,0 +1,11 @@
+# Build output and downloaded sources — never committed.
+.cache/
+out/
+*.o
+*.ko
+vmlinux*
+Image
+System.map
+Module.symvers
+dist/
+toolchain/
