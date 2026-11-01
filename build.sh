@@ -30,6 +30,32 @@ AK3_COMMIT=${AK3_COMMIT:-41f04bdb4ee30a44e429c2c1131d5e8bb32b15f1}
 WORK_DIR=${WORK_DIR:-$HERE/.cache}
 SRC="$WORK_DIR/src"
 OUT=${OUT_DIR:-$HERE/out}
+
+# net/netfilter has both xt_DSCP.c (target) and xt_dscp.c (match).  On a
+# case-folded filesystem (f2fs casefold, exFAT) one of them is lost during
+# extraction and the build dies with "no rule to make target xt_DSCP.o".
+# Fail early with an actionable message instead of that confusing error.
+check_case_sensitive() {
+	local dir=$1 probe
+	mkdir -p "$dir"
+	probe="$dir/.case-probe.$$"
+	mkdir -p "$probe"
+	: >"$probe/A"
+	: >"$probe/a"
+	if [ "$(ls -1 "$probe" | wc -l)" -ne 2 ]; then
+		rm -rf "$probe"
+		return 1
+	fi
+	rm -rf "$probe"
+}
+if ! check_case_sensitive "$WORK_DIR" || ! check_case_sensitive "$OUT"; then
+	echo "WORK_DIR/OUT_DIR must be on a case-sensitive filesystem" >&2
+	echo "  WORK_DIR=$WORK_DIR" >&2
+	echo "  OUT_DIR=$OUT" >&2
+	echo "  use a case-sensitive path, or clear casefold with: chattr -F <dir>" >&2
+	exit 1
+fi
+
 DIST="$HERE/dist"
 JOBS=${JOBS:-$(nproc 2>/dev/null || echo 4)}
 EXPECTED_RELEASE=${EXPECTED_RELEASE:-6.6.30}
@@ -73,9 +99,21 @@ if [ ! -e "$OUT/abi_symbollist.raw" ]; then
 	python3 scripts/gen-whitelist.py "$SRC" "$OUT/abi_symbollist.raw"
 fi
 
-log "applying Tier A configuration"
+log "applying Tier A + Droidspaces configuration"
+# Droidspaces GKI extras: self-contained options that do not resize core
+# structures or change the stock modules' symbol CRCs.  Do NOT add
+# CGROUP_PIDS/CFS_BANDWIDTH/NF_TABLES/BRIDGE_NETFILTER here: they resize
+# cgroup/net/skbuff structures and break the vendor-module ABI.
 "$SRC/scripts/config" --file "$OUT/.config" \
 	-e SYSVIPC -e SYSVIPC_SYSCTL -e IPC_NS -e PID_NS \
+	-e POSIX_MQUEUE -e POSIX_MQUEUE_SYSCTL -e DEVTMPFS \
+	-e MACVLAN \
+	-e IP6_NF_NAT -e IP6_NF_TARGET_MASQUERADE \
+	-e TMPFS_POSIX_ACL -e TMPFS_XATTR \
+	-e IP_NF_TARGET_REJECT -e IP6_NF_TARGET_REJECT \
+	-e NETFILTER_XT_TARGET_LOG \
+	-e NETFILTER_XT_MATCH_RECENT \
+	-e IP_SET -e IP_SET_HASH_IP -e IP_SET_HASH_NET -e NETFILTER_XT_SET \
 	-e SECURITY_LANDLOCK \
 	-e NETFILTER_XT_MATCH_ADDRTYPE \
 	-e DEBUG_INFO_BTF -e DEBUG_INFO_BTF_MODULES -e MODULE_ALLOW_BTF_MISMATCH \
